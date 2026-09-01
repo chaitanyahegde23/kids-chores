@@ -1,0 +1,56 @@
+name: kids-chores
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-kids_chores}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-development-only}
+      POSTGRES_DB: ${POSTGRES_DB:-kids_chores}
+    ports:
+      - "5433:5432"
+    volumes:
+      - chores_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kids_chores} -d ${POSTGRES_DB:-kids_chores}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ./backend
+    environment:
+      APP_NAME: ${APP_NAME:-Kids Chores API}
+      APP_ENV: ${APP_ENV:-development}
+      API_DOCS_ENABLED: ${API_DOCS_ENABLED:-true}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-kids_chores}:${POSTGRES_PASSWORD:-local-development-only}@db:5432/${POSTGRES_DB:-kids_chores}
+      HOUSEHOLD_TIMEZONE: ${HOUSEHOLD_TIMEZONE:-America/New_York}
+      WEATHER_HOME_LABEL: ${WEATHER_HOME_LABEL:-Home}
+      WEATHER_HOME_LOCATION: ${WEATHER_HOME_LOCATION:-10001}
+      WEATHER_SCHOOL_LABEL: ${WEATHER_SCHOOL_LABEL:-School}
+      WEATHER_SCHOOL_LOCATION: ${WEATHER_SCHOOL_LOCATION:-10003}
+      PARENT_PIN: ${PARENT_PIN:-2468}
+      SESSION_SECRET: ${SESSION_SECRET:-local-development-secret-change-me}
+      PARENT_SESSION_SECONDS: ${PARENT_SESSION_SECONDS:-43200}
+      ALLOWED_ORIGIN: ${ALLOWED_ORIGIN:-http://localhost:5174}
+    command: ["sh", "-c", "python -m alembic upgrade head && python -m app.seed && exec uvicorn app.main:app --host 0.0.0.0 --port 8010 --reload --reload-dir /app/app"]
+    ports:
+      - "8010:8010"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ./frontend
+    ports:
+      - "8081:8080"
+    depends_on:
+      api:
+        condition: service_started
+
+volumes:
+  chores_postgres_data:

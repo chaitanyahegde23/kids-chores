@@ -1,0 +1,90 @@
+name: kids-chores
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-kids_chores}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-kids_chores}
+    volumes:
+      - chores_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kids_chores} -d ${POSTGRES_DB:-kids_chores}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks: [database]
+    security_opt: [no-new-privileges:true]
+
+  api:
+    build:
+      context: ./backend
+    environment:
+      APP_NAME: Kids Chores API
+      APP_ENV: production
+      API_DOCS_ENABLED: "false"
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-kids_chores}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-kids_chores}
+      HOUSEHOLD_TIMEZONE: ${HOUSEHOLD_TIMEZONE:-America/New_York}
+      WEATHER_HOME_LABEL: ${WEATHER_HOME_LABEL:-Home}
+      WEATHER_HOME_LOCATION: ${WEATHER_HOME_LOCATION:-10001}
+      WEATHER_SCHOOL_LABEL: ${WEATHER_SCHOOL_LABEL:-School}
+      WEATHER_SCHOOL_LOCATION: ${WEATHER_SCHOOL_LOCATION:-10003}
+      PARENT_PIN: ${PARENT_PIN:?Set PARENT_PIN in .env}
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env}
+      PARENT_SESSION_SECONDS: ${PARENT_SESSION_SECONDS:-43200}
+      ALLOWED_ORIGIN: ${ALLOWED_ORIGIN:?Set ALLOWED_ORIGIN in .env}
+    command: ["sh", "-c", "python -m alembic upgrade head && python -m app.seed && exec uvicorn app.main:app --host 0.0.0.0 --port 8010 --workers 1"]
+    expose: ["8010"]
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/health', timeout=5)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks: [database, application]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+
+  web:
+    build:
+      context: ./frontend
+    ports:
+      - "127.0.0.1:8081:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks: [application]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    command: ["tunnel", "--no-autoupdate", "run", "--token", "${CLOUDFLARE_TUNNEL_TOKEN:?Set CLOUDFLARE_TUNNEL_TOKEN in .env}"]
+    depends_on:
+      web:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [application]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    profiles: [tunnel]
+
+volumes:
+  chores_postgres_data:
+
+networks:
+  database:
+    internal: true
+  application:
